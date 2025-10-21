@@ -1,0 +1,61 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Three.js + WebXR VR Demo</title>
+    <style>
+      body { margin: 0; overflow: hidden; }
+      canvas { display: block; }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+          "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from 'three';
+      import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
+      document.body.appendChild(VRButton.createButton(renderer));
+
+      // 簡単なオブジェクト（立方体）
+      const geometry = new THREE.BoxGeometry(1, 1, 1);
+      const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+      const cube = new THREE.Mesh(geometry, material);
+      scene.add(cube);
+
+      // 環境光と方向光
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(1, 1, 1);
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0x404040));
+
+      camera.position.z = 3;
+
+      // アニメーション
+      renderer.setAnimationLoop(() => {
+        cube.rotation.x += 0.01;
+        cube.rotation.y += 0.01;
+        renderer.render(scene, camera);
+      });
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    </script>
+  </body>
+</html>
