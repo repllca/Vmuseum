@@ -2,26 +2,21 @@ import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import { createScene } from "./scene.js";
 import { setupControls } from "./controls.js";
 import { setupPhysics } from "./physics.js";
+import { setupMultiplayer } from "./multiplayer.js";
 
 const { scene, camera, renderer } = createScene();
 const controls = setupControls(camera);
 const { world, sphereBody, sphereMesh, playerBody } = setupPhysics(scene);
+setupMultiplayer(scene, playerBody); // 🟢 ← マルチプレイ同期
 
 document.body.appendChild(renderer.domElement);
 
 function animate() {
   requestAnimationFrame(animate);
-
-  // Cannon.js のステップ
   world.step(1 / 60);
-
-  // 球の描画同期
   sphereMesh.position.copy(sphereBody.position);
-
-  // 🔹 カメラをプレイヤーの位置に同期
   camera.position.copy(playerBody.position);
 
-  // 🔹 プレイヤーの移動入力を反映
   const move = new THREE.Vector3();
   if (controls.move.forward) move.z -= 1;
   if (controls.move.backward) move.z += 1;

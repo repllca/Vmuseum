@@ -1,21 +1,30 @@
-from fastapi import FastAPI, WebSocket
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-clients = []
+connected = {}
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    clients.append(websocket)
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+    player_id = id(ws)
+    connected[player_id] = ws
+    print(f"✅ Connected: {player_id}")
+
     try:
         while True:
-            data = await websocket.receive_text()
-            print("Received:", data)
-            # 全クライアントにブロードキャスト
-            for c in clients:
-                await c.send_text(f"Echo: {data}")
-    except Exception as e:
-        print("Client disconnected:", e)
-        clients.remove(websocket)
+            data = await ws.receive_json()
+            # 全員にブロードキャスト
+            for pid, conn in connected.items():
+                if pid != player_id:
+                    await conn.send_json({"id": player_id, **data})
+    except WebSocketDisconnect:
+        print(f"❌ Disconnected: {player_id}")
+        del connected[player_id]
