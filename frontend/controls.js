@@ -3,6 +3,7 @@ export function setupControls(camera) {
   let pitch = 0;
   let yaw = 0;
 
+  // === カメラ回転 ===
   window.addEventListener("mousemove", (e) => {
     if (document.pointerLockElement !== document.body) return;
     const sensitivity = 0.002;
@@ -11,6 +12,7 @@ export function setupControls(camera) {
     pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
   });
 
+  // === キー入力 ===
   window.addEventListener("keydown", (e) => {
     if (e.code === "KeyW") move.forward = true;
     if (e.code === "KeyS") move.backward = true;
@@ -24,6 +26,7 @@ export function setupControls(camera) {
     if (e.code === "KeyD") move.right = false;
   });
 
+  // === ポインターロック ===
   window.addEventListener("click", () => document.body.requestPointerLock());
 
   function update() {
@@ -32,5 +35,5 @@ export function setupControls(camera) {
     camera.rotation.x = pitch;
   }
 
-  return { update, move };
+  return { update, move, yaw };
 }
