@@ -4,8 +4,54 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Three.js Minimal Setup</title>
+
+  <style>
+    /* ✅ 画面下の入力バー */
+    #hud{
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      width: min(900px, calc(100vw - 24px));
+      padding: 10px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(8px);
+      z-index: 9999;
+      pointer-events: auto;
+    }
+    #userInput{
+      flex: 1;
+      font-size: 16px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.08);
+      color: white;
+      outline: none;
+    }
+    #userInput::placeholder{ color: rgba(255,255,255,0.6); }
+    #sendBtn{
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.12);
+      color: white;
+      cursor: pointer;
+    }
+  </style>
 </head>
+
 <body style="margin:0; overflow:hidden;">
+  <!-- ✅ 下の入力欄 -->
+  <div id="hud">
+    <input id="userInput" type="text" placeholder="ここに入力してEnter…" />
+    <button id="sendBtn">Send</button>
+  </div>
+
+  <!-- three.js -->
   <script type="module" src="./main.js"></script>
 </body>
 </html>

@@ -23,6 +23,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================
+# WebSocket: Multiplayer sync
+# ============================================================
 connected: dict[int, WebSocket] = {}
 
 @app.websocket("/ws")
@@ -43,15 +46,16 @@ async def websocket_endpoint(ws: WebSocket):
         connected.pop(player_id, None)
 
 
-# -----------------------------
+# ============================================================
 # Gemini: prompt.txt + test.csv を結合して投げる
-# -----------------------------
+# ============================================================
 
 class GeminiRequest(BaseModel):
     user_text: str = ""
     # 必要ならAPI呼び出しごとに上書きできるように（省略可）
     prompt_txt_path: Optional[str] = None
     csv_path: Optional[str] = None
+
 
 def _read_text_file(path: Path) -> str:
     try:
@@ -61,13 +65,18 @@ def _read_text_file(path: Path) -> str:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read {str(path)}: {e}")
 
+
 @app.post("/gemini")
 async def gemini_endpoint(req: GeminiRequest):
     # ✅ パス解決（/app 配下で動かす想定）
     base_dir = Path(os.getenv("APP_BASE_DIR", "/app"))
 
-    prompt_txt = Path(req.prompt_txt_path) if req.prompt_txt_path else Path(os.getenv("PROMPT_TXT_PATH", "prompt.txt"))
-    csv_file  = Path(req.csv_path) if req.csv_path else Path(os.getenv("CSV_PATH", "test.csv"))
+    prompt_txt = Path(req.prompt_txt_path) if req.prompt_txt_path else Path(
+        os.getenv("PROMPT_TXT_PATH", "prompt.txt")
+    )
+    csv_file = Path(req.csv_path) if req.csv_path else Path(
+        os.getenv("CSV_PATH", "test.csv")
+    )
 
     # 相対パスなら /app 基準に寄せる
     if not prompt_txt.is_absolute():
@@ -77,7 +86,8 @@ async def gemini_endpoint(req: GeminiRequest):
 
     prompt_text = _read_text_file(prompt_txt)
     csv_text = _read_text_file(csv_file)
-
+    #試験用
+    csv_text = "ネットのやつを参考にしてね"
     # ✅ 長すぎるCSVをそのまま入れると詰むので、上限を設ける（必要なら .env で調整）
     max_chars = int(os.getenv("MAX_CONTEXT_CHARS", "22220000"))
     if len(csv_text) > max_chars:
@@ -97,11 +107,13 @@ async def gemini_endpoint(req: GeminiRequest):
 
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        # google-genai は環境変数から拾えるが、未設定ならここで落とす
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY (or GOOGLE_API_KEY) is not set in environment/.env")
+        raise HTTPException(
+            status_code=500,
+            detail="GEMINI_API_KEY (or GOOGLE_API_KEY) is not set in environment/.env",
+        )
 
     try:
-        # GEMINI_API_KEY が環境にあれば client = genai.Client() でOK :contentReference[oaicite:1]{index=1}
+        # GEMINI_API_KEY が環境にあれば client = genai.Client() でOK
         client = genai.Client()
         resp = client.models.generate_content(
             model=model,
@@ -110,3 +122,30 @@ async def gemini_endpoint(req: GeminiRequest):
         return {"text": getattr(resp, "text", None) or str(resp)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gemini API error: {e}")
+
+
+# ============================================================
+# User input -> 既存 gemini_endpoint() に流して返す
+# ============================================================
+
+class UserInputRequest(BaseModel):
+    text: str
+    ts: Optional[int] = None
+    # 省略可：フロントから上書きしたい場合
+    prompt_txt_path: Optional[str] = None
+    csv_path: Optional[str] = None
+
+
+@app.post("/api/user_input")
+async def user_input_endpoint(req: UserInputRequest):
+    print(f"📝 user_input: text={req.text} ts={req.ts}")
+
+    # ✅ 既存の /gemini の処理にそのまま合流
+    gemini_req = GeminiRequest(
+        user_text=req.text,
+        prompt_txt_path=req.prompt_txt_path,
+        csv_path=req.csv_path,
+    )
+
+    result = await gemini_endpoint(gemini_req)  # {"text": "..."}
+    return {"ok": True, **result}
