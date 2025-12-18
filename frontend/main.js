@@ -3,19 +3,19 @@
 //  （Raycast設置モード + HUD入力分離）
 // ===============================
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
-import { createScene } from "./scene.js";
 import { setupControls } from "./controls.js";
-import { setupPhysics } from "./physics.js";
 import { setupMultiplayer } from "./multiplayer.js";
 import { createArtFrame } from "./exhibits/artFrame.js";
 import { setupHudInput } from "./ui/hubInput.js";
-
+import { createScene, ROOM } from "./scene.js";
+import { setupPhysics } from "./physics.js";
 // ============================================================
 // シーン初期化
 // ============================================================
-const { scene, camera, renderer } = await createScene();
+const { scene, camera, renderer, frames } = await createScene();
+const { world, sphereBody, sphereMesh, playerBody } = setupPhysics(scene, ROOM);
 const controls = setupControls(camera);
-const { world, sphereBody, sphereMesh, playerBody } = setupPhysics(scene);
+  setupPhysics(scene, { width: 30, height: 30, depth: 30 });
 setupMultiplayer(scene, playerBody); // 不要ならコメントアウトOK
 
 document.body.appendChild(renderer.domElement);
@@ -24,12 +24,25 @@ document.body.appendChild(renderer.domElement);
 // HUD 入力（ユーザインプット）
 // ============================================================
 const hud = setupHudInput({
-  apiBase: "http://localhost:8000", // 同一オリジンなら空文字。別ポートなら "http://localhost:8000"
+  apiBase: "http://localhost:8000",
   onResponse: (data) => {
-    // Gemini からの返答
-    if (data?.text) {
-      console.log("🤖 Gemini:", data.text);
-      // TODO: チャットログUIに表示するならここ
+    const payload =
+      data?.json ??
+      (() => {
+        try { return JSON.parse(data?.text ?? ""); } catch { return null; }
+      })();
+
+    if (!payload) return;
+
+    const ids = Array.isArray(payload.works)
+      ? payload.works.map((w) => w.id).filter(Boolean)
+      : [];
+
+    if (ids.length === 0) return;
+
+    for (let i = 0; i < frames.length; i++) {
+      const id = ids[i % ids.length];
+      frames[i].setWorkId(id);
     }
   },
 });
@@ -49,7 +62,6 @@ window.addEventListener("resize", () => {
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let placingMode = false;
-
 // Raycast対象を「置ける面」だけにする
 function getPlaceableMeshes() {
   const list = [];
