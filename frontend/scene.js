@@ -83,7 +83,7 @@ export function createScene() {
   const wallForward = new THREE.Vector3(0, 0, 10); // 壁の手前方向(+Z)
   const floatFromWall = 0; // ← 埋まり/チラつき防止。大きめでOK
 
-  const frameY = -6.0; // プレイヤー目線(1.6-1.8)付近に合わせる
+  const frameY = -5.0; // プレイヤー目線(1.6-1.8)付近に合わせる
   const frameXs = [-3, 0, 3]; // 広い部屋なので間隔広め
 
   const workIds = ["F452", "F737", "F451"]; // 仮（Geminiで差し替える）
