@@ -1,7 +1,7 @@
+// scene.js
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
 import { createArtFrame } from "./exhibits/artFrame.js";
 
-// ✅ physics/main からも使えるように export
 export const ROOM = {
   width: 30,
   height: 30,
@@ -14,12 +14,12 @@ export function createScene() {
 
   const WALL = {
     yCenter: ROOM.height / 2,
-    zFront: -ROOM.depth / 2, // 正面壁（奥側）
-    zBack: ROOM.depth / 2,
+    zFront: -ROOM.depth / 2, // 奥側 = -15
+    zBack: ROOM.depth / 2,   // 手前側 = +15
   };
 
   // ============================================================
-  // カメラ（壁が見える位置）
+  // カメラ（奥壁が見える位置）
   // ============================================================
   const camera = new THREE.PerspectiveCamera(
     75,
@@ -27,8 +27,8 @@ export function createScene() {
     0.1,
     2000
   );
-  camera.position.set(0, 1.8, WALL.zBack - 4);       // 後ろ壁の少し手前
-  camera.lookAt(0, 1.8, WALL.zFront + 2);           // 正面壁方向を見る
+  camera.position.set(0, 1.8, WALL.zBack - 4); // z=11
+  camera.lookAt(0, 1.8, WALL.zFront + 2);      // z=-13
 
   // ============================================================
   // レンダラー
@@ -66,42 +66,47 @@ export function createScene() {
   scene.add(roomShell);
 
   // ============================================================
-  // 正面壁（raycast/貼り付け用に明示）
+  // 正面壁（視認用・raycast用）
   // ============================================================
+  const wallFrontMat = new THREE.MeshStandardMaterial({
+    color: 0xaaaaaa,
+    side: THREE.FrontSide,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  });
+
   const wallFront = new THREE.Mesh(
     new THREE.PlaneGeometry(ROOM.width, ROOM.height),
-    new THREE.MeshStandardMaterial({ color: 0xaaaaaa, side: THREE.FrontSide })
+    wallFrontMat
   );
   wallFront.position.set(0, WALL.yCenter, WALL.zFront);
   wallFront.userData.placeable = true;
   scene.add(wallFront);
 
   // ============================================================
-  // 🖼 正面壁に3枚貼る（ID→assets/GoghDB）
+  // 🖼 正面壁に初期3枚（確実に見える）
   // ============================================================
   const frames = [];
-  const wallForward = new THREE.Vector3(0, 0, 10); // 壁の手前方向(+Z)
-  const floatFromWall = 0; // ← 埋まり/チラつき防止。大きめでOK
 
-  const frameY = -5.0; // プレイヤー目線(1.6-1.8)付近に合わせる
-  const frameXs = [-3, 0, 3]; // 広い部屋なので間隔広め
+  const wallNormal = new THREE.Vector3(0, 0, 1); // 正面壁の内向き（+Z）
+  const floatFromWall = 0.25;                    // ★確実に見えるよう大きめ
+  const frameY = 1.8;                            // ★目線
+  const frameXs = [-6, 0, 6];
 
-  const workIds = ["F452", "F737", "F451"]; // 仮（Geminiで差し替える）
+  const workIds = ["F452", "F737", "F451"];
 
-  for (let i = 0; i < 3; i++) {
-    const id = workIds[i];
+  for (let i = 0; i < workIds.length; i++) {
+    const anchor = new THREE.Vector3(frameXs[i], frameY, WALL.zFront);
+    const pos = anchor.clone().add(wallNormal.clone().multiplyScalar(floatFromWall));
 
-    // 壁上の基準点（正面壁） + 手前へ浮かせ
-    const pos = new THREE.Vector3(frameXs[i], frameY, WALL.zFront)
-      .add(wallForward.clone().multiplyScalar(floatFromWall));
-
-    const frame = createArtFrame([id], pos, {
+    const frame = createArtFrame([{ id: workIds[i] }], pos, {
       mode: "id",
       assetsBase: "./assets/GoghDB",
     });
 
-    // 壁に正面向き
-    frame.group.lookAt(pos.clone().add(wallForward));
+    // ★ groupの位置は artFrame.js 内で設定済み（ローカル座標なので回転OK）
+    frame.group.lookAt(pos.clone().add(wallNormal));
 
     scene.add(frame.group);
     frames.push(frame);
