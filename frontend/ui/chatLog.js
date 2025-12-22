@@ -1,207 +1,180 @@
 // ui/chatLog.js
-// ===============================
-// Chat Log UI Component
-// - Three.js canvasの上に重ねる想定
-// - addUser/addAI でメッセージ追加
-// - 自動スクロール、クリア、表示切替
-// ===============================
-
 export function createChatLog({
-  mount = document.body,
+  title = "Chat",
+  initialOpen = true,
   width = 420,
   maxHeight = 260,
-  title = "Conversation",
-  initialOpen = true,
+  bottom = 18,
+  right = 18,
 } = {}) {
   injectStyleOnce();
 
   const root = document.createElement("div");
-  root.className = "vr-chatlog";
-  root.style.setProperty("--chatlog-width", `${width}px`);
-  root.style.setProperty("--chatlog-maxh", `${maxHeight}px`);
+  root.className = "vr-chat";
+
+  root.style.width = `${width}px`;
+  root.style.right = `${right}px`;
+  root.style.bottom = `${bottom}px`;
 
   const header = document.createElement("div");
-  header.className = "vr-chatlog__header";
+  header.className = "vr-chat__header";
 
-  const hTitle = document.createElement("div");
-  hTitle.className = "vr-chatlog__title";
-  hTitle.textContent = title;
+  const titleEl = document.createElement("div");
+  titleEl.className = "vr-chat__title";
+  titleEl.textContent = title;
 
-  const right = document.createElement("div");
-  right.className = "vr-chatlog__headerRight";
+  const btn = document.createElement("button");
+  btn.className = "vr-chat__toggle";
+  btn.textContent = initialOpen ? "—" : "＋";
 
-  const btnClear = document.createElement("button");
-  btnClear.className = "vr-chatlog__btn";
-  btnClear.textContent = "Clear";
-
-  const btnToggle = document.createElement("button");
-  btnToggle.className = "vr-chatlog__btn";
-  btnToggle.textContent = initialOpen ? "Hide" : "Show";
-
-  right.appendChild(btnClear);
-  right.appendChild(btnToggle);
-
-  header.appendChild(hTitle);
-  header.appendChild(right);
+  header.appendChild(titleEl);
+  header.appendChild(btn);
 
   const body = document.createElement("div");
-  body.className = "vr-chatlog__body";
+  body.className = "vr-chat__body";
 
   const list = document.createElement("div");
-  list.className = "vr-chatlog__list";
+  list.className = "vr-chat__list";
   body.appendChild(list);
 
   root.appendChild(header);
   root.appendChild(body);
-  mount.appendChild(root);
+  document.body.appendChild(root);
 
-  let isOpen = initialOpen;
-  setOpen(isOpen);
+  let open = initialOpen;
+  setOpen(open);
 
-  btnClear.addEventListener("click", () => {
-    list.innerHTML = "";
-  });
+  btn.addEventListener("click", () => setOpen(!open));
+  header.addEventListener("dblclick", () => setOpen(!open));
 
-  btnToggle.addEventListener("click", () => {
-    isOpen = !isOpen;
-    setOpen(isOpen);
-  });
-
-  function setOpen(open) {
+  function setOpen(v) {
+    open = v;
     body.style.display = open ? "block" : "none";
-    btnToggle.textContent = open ? "Hide" : "Show";
+    btn.textContent = open ? "—" : "＋";
   }
 
-  function addMessage({ role, text, meta }) {
-    const row = document.createElement("div");
-    row.className = `vr-chatlog__row vr-chatlog__row--${role}`;
+  function push(role, text) {
+    if (!text) return;
+
+    const item = document.createElement("div");
+    item.className = `vr-chat__msg vr-chat__msg--${role}`;
 
     const bubble = document.createElement("div");
-    bubble.className = `vr-chatlog__bubble vr-chatlog__bubble--${role}`;
-    bubble.textContent = String(text ?? "");
+    bubble.className = "vr-chat__bubble";
+    bubble.textContent = String(text);
 
-    if (meta) {
-      const m = document.createElement("div");
-      m.className = "vr-chatlog__meta";
-      m.textContent = String(meta);
-      row.appendChild(m);
-    }
+    item.appendChild(bubble);
+    list.appendChild(item);
 
-    row.appendChild(bubble);
-    list.appendChild(row);
-
-    // auto-scroll
-    requestAnimationFrame(() => {
-      list.scrollTop = list.scrollHeight;
-    });
+    // 最新にスクロール
+    list.scrollTop = list.scrollHeight;
   }
 
   return {
-    el: root,
+    // ★ これだけ使う（systemはUIに出さない）
+    addUser: (text) => push("user", text),
+    addAI: (text) => push("ai", text),
+
+    // 表示制御
     open: () => setOpen(true),
     close: () => setOpen(false),
-    toggle: () => {
-      isOpen = !isOpen;
-      setOpen(isOpen);
-    },
-    clear: () => (list.innerHTML = ""),
-    addUser: (text, meta) => addMessage({ role: "user", text, meta }),
-    addAI: (text, meta) => addMessage({ role: "ai", text, meta }),
-    addSystem: (text, meta) => addMessage({ role: "system", text, meta }),
+    toggle: () => setOpen(!open),
+    isOpen: () => open,
   };
 }
 
-let __chatlog_style_injected = false;
+let __styleInjected = false;
 function injectStyleOnce() {
-  if (__chatlog_style_injected) return;
-  __chatlog_style_injected = true;
+  if (__styleInjected) return;
+  __styleInjected = true;
 
   const style = document.createElement("style");
   style.textContent = `
-    .vr-chatlog{
+    .vr-chat{
       position: fixed;
-      left: 16px;
-      bottom: 100px;
-      width: var(--chatlog-width, 420px);
-      color: #fff;
+      z-index: 9000;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
-      z-index: 9999;
-      pointer-events: auto;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(20,20,20,0.68);
+      backdrop-filter: blur(10px);
     }
-    .vr-chatlog__header{
+    .vr-chat__header{
       display:flex;
       align-items:center;
       justify-content:space-between;
-      padding: 10px 10px;
-      border-radius: 12px 12px 0 0;
-      background: rgba(0,0,0,0.55);
-      backdrop-filter: blur(6px);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-bottom: none;
+      padding: 10px 12px;
+      cursor: pointer;
+      user-select: none;
+      background: rgba(0,0,0,0.35);
+      border-bottom: 1px solid rgba(255,255,255,0.10);
     }
-    .vr-chatlog__title{
-      font-weight: 700;
+    .vr-chat__title{
+      color:#fff;
       font-size: 13px;
       opacity: 0.95;
+      letter-spacing: 0.2px;
     }
-    .vr-chatlog__headerRight{ display:flex; gap:8px; }
-    .vr-chatlog__btn{
-      font-size: 12px;
-      padding: 6px 10px;
+    .vr-chat__toggle{
+      width: 34px;
+      height: 28px;
       border-radius: 10px;
       border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(0,0,0,0.35);
+      background: rgba(0,0,0,0.25);
       color: #fff;
       cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
     }
-    .vr-chatlog__btn:hover{ background: rgba(255,255,255,0.08); }
+    .vr-chat__toggle:hover{ background: rgba(255,255,255,0.08); }
 
-    .vr-chatlog__body{
-      background: rgba(0,0,0,0.42);
-      backdrop-filter: blur(6px);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-top: none;
-      border-radius: 0 0 12px 12px;
+    .vr-chat__body{
+      max-height: 260px;
       overflow: hidden;
     }
-    .vr-chatlog__list{
-      max-height: var(--chatlog-maxh, 260px);
+    .vr-chat__list{
+      max-height: 260px;
       overflow-y: auto;
       padding: 10px;
-      display:flex;
+      display: flex;
       flex-direction: column;
       gap: 8px;
     }
-    .vr-chatlog__row{
+
+    .vr-chat__msg{
       display:flex;
-      flex-direction: column;
-      gap: 4px;
+      width: 100%;
     }
-    .vr-chatlog__bubble{
-      width: fit-content;
-      max-width: 95%;
+    .vr-chat__msg--user{ justify-content: flex-end; }
+    .vr-chat__msg--ai{ justify-content: flex-start; }
+
+    .vr-chat__bubble{
+      max-width: 86%;
       padding: 8px 10px;
-      border-radius: 12px;
+      border-radius: 14px;
+      color: #fff;
+      font-size: 13px;
+      line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
       border: 1px solid rgba(255,255,255,0.10);
-      line-height: 1.35;
-      font-size: 13px;
     }
-    .vr-chatlog__row--user{ align-items: flex-end; }
-    .vr-chatlog__row--ai{ align-items: flex-start; }
-    .vr-chatlog__row--system{ align-items: center; }
+    .vr-chat__msg--user .vr-chat__bubble{
+      background: rgba(80,140,255,0.22);
+    }
+    .vr-chat__msg--ai .vr-chat__bubble{
+      background: rgba(255,255,255,0.10);
+    }
 
-    .vr-chatlog__bubble--user{ background: rgba(80,140,255,0.25); }
-    .vr-chatlog__bubble--ai{ background: rgba(255,255,255,0.10); }
-    .vr-chatlog__bubble--system{
-      background: rgba(0,0,0,0.25);
-      opacity: 0.9;
-      font-size: 12px;
-    }
-    .vr-chatlog__meta{
-      font-size: 11px;
-      opacity: 0.75;
+    /* scroll bar */
+    .vr-chat__list::-webkit-scrollbar{ width: 10px; }
+    .vr-chat__list::-webkit-scrollbar-thumb{
+      background: rgba(255,255,255,0.12);
+      border-radius: 999px;
+      border: 2px solid rgba(0,0,0,0);
+      background-clip: padding-box;
     }
   `;
   document.head.appendChild(style);

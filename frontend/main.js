@@ -1,8 +1,10 @@
 // ===============================
 //  Main VR Museum Frontend
 //  （P=閲覧モード / Raycastで選択→拡大表示 / works数に応じて可変）
-//  + works空対策（payload形の吸収）
-//  + 起動時に初期展示を表示
+//  + ChatLogはUser/AIのみ（systemはtoast）
+//  + 4面配置（front/back/left/right）
+//  + test.csv をフロントで読み込み（F番号→title/width/height/imagefilename）
+//  + 作品ごとにサイズ可変（実寸m→スケール変換）
 // ===============================
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
 
@@ -13,6 +15,9 @@ import { createArtFrame } from "./exhibits/artFrame.js";
 import { setupHudInput } from "./ui/hubInput.js";
 import { createChatLog } from "./ui/chatLog.js";
 import { createImageViewer } from "./ui/imageViewer.js";
+import { createToast } from "./ui/toast.js";
+
+import { loadCatalogCsv } from "./ui/catalogCsv.js";
 
 import { createScene, ROOM } from "./scene.js";
 import { setupPhysics } from "./physics.js";
@@ -26,19 +31,75 @@ const { world, sphereBody, sphereMesh, playerBody } = setupPhysics(scene, ROOM);
 document.body.appendChild(renderer.domElement);
 
 // ============================================================
-// UI
+// UI（ChatLogはUser/AIのみ、状態はtoast）
 // ============================================================
 const chatLog = createChatLog({
-  title: "Curator ↔ User",
+  title: "User ↔ AI",
   initialOpen: true,
-  width: 520,
-  maxHeight: 300,
+  width: 420,
+  maxHeight: 260,
+  bottom: 18,
+  right: 18,
 });
-chatLog.addSystem("🟢 VR Museum frontend started");
+
+const toast = createToast({ right: 18, bottom: 290 });
+toast.show("🟢 VR Museum started");
 
 const viewer = createImageViewer();
 
+// ============================================================
+// test.csv（フロントでロード）
+// ============================================================
+let catalogMap = new Map();
+
+async function initCatalog() {
+  try {
+    // ✅ test.csv をフロントの静的配下に置く（例: /assets/test.csv）
+    // ここが 404 ならパスを合わせてください
+    catalogMap = await loadCatalogCsv("./assets/test.csv");
+    toast.show(`📚 catalog loaded: ${catalogMap.size}`);
+  } catch (e) {
+    console.error("catalog load failed:", e);
+    toast.show("⚠️ catalog csv load failed");
+    catalogMap = new Map();
+  }
+}
+await initCatalog();
+
+function resolveImageUrlFromMeta(meta) {
+  // ローカル運用（CSVの imagefilename が F1.jpg など）
+  if (meta?.imagefilename) return `./assets/GoghDB/${meta.imagefilename}`;
+
+  // 直リンクURLなら採用（upload.wikimedia.org の場合など）
+  if (meta?.wikimediaurl && meta.wikimediaurl.includes("upload.wikimedia.org")) {
+    return meta.wikimediaurl;
+  }
+  return null;
+}
+
+function enrichWorksWithCatalog(works) {
+  return works.map((w) => {
+    const id = String(w.id ?? "").trim();
+    const meta = catalogMap.get(id);
+
+    const url = resolveImageUrlFromMeta(meta);
+
+    return {
+      ...w,
+      // title が空なら英題で補完（日本語タイトルが別途あるならそれを使う）
+      title: w.title && String(w.title).trim() ? w.title : (meta?.title_en ?? ""),
+      // 実寸（m想定）
+      w_m: meta?.w_m ?? null,
+      h_m: meta?.h_m ?? null,
+      // work.url を artFrame 側で使えるように（mode=url で表示）
+      url: url ?? w.url ?? "",
+    };
+  });
+}
+
+// ============================================================
 // HUD（TDZ回避）
+// ============================================================
 let hud = null;
 
 // ============================================================
@@ -48,29 +109,33 @@ let viewMode = false;
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
+// hover（任意：うっすら明るく）
 let lastHover = null;
 let lastHoverColor = null;
 
 function setViewMode(on) {
   viewMode = on;
 
+  // 閲覧モードONなら pointer lock を外す（カーソル操作したい）
   if (viewMode && document.pointerLockElement) {
     document.exitPointerLock?.();
   }
 
-  chatLog.addSystem(viewMode ? "🔍 閲覧モード ON（絵をクリックで拡大）" : "🎮 移動モード ON");
+  toast.show(viewMode ? "🔍 閲覧モード ON" : "🎮 移動モード ON");
 }
 
 window.addEventListener("keydown", (e) => {
   if (e.code === "KeyP") setViewMode(!viewMode);
 });
 
+// canvas基準のNDC
 function updateMouseNDCFromEvent(e) {
   const rect = renderer.domElement.getBoundingClientRect();
   mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
   mouse.y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
 }
 
+// シーンから「絵Mesh」だけ集める
 function getArtworkMeshes() {
   const list = [];
   scene.traverse((obj) => {
@@ -127,11 +192,13 @@ window.addEventListener("pointerdown", (e) => {
   const reason = mesh.userData?.getArtworkReason?.() ?? "";
 
   if (!url) {
-    chatLog.addSystem("⚠️ この絵はURL取得できませんでした");
+    toast.show("⚠️ URL取得できませんでした");
     return;
   }
 
-  const caption = [label ? `🖼 ${label}` : "🖼 Artwork", reason].filter(Boolean).join("\n\n");
+  const caption = [label ? `🖼 ${label}` : "🖼 Artwork", reason]
+    .filter(Boolean)
+    .join("\n\n");
   viewer.show(url, caption);
 });
 
@@ -141,23 +208,22 @@ window.addEventListener("pointerdown", (e) => {
 function normalizePayload(data) {
   if (!data) return null;
 
-  // 1) まず直下に works があるならそれを使う
+  // 直下にある
   if (data.curator_comment || data.works) return data;
 
-  // 2) よくあるラッパー
+  // ラッパー
   if (data.json && (data.json.curator_comment || data.json.works)) return data.json;
   if (data.data && (data.data.curator_comment || data.data.works)) return data.data;
   if (data.result && (data.result.curator_comment || data.result.works)) return data.result;
 
-  // 3) ★ 最重要：text に JSON が文字列で入っている場合を救う
+  // textにJSON文字列が入っている
   if (typeof data.text === "string") {
     const s = data.text.trim();
     if (s.startsWith("{") && s.endsWith("}")) {
       try {
-        const parsed = JSON.parse(s);
-        return parsed;
+        return JSON.parse(s);
       } catch {
-        // ここで落ちたら raw のまま返す
+        // ignore
       }
     }
   }
@@ -167,7 +233,6 @@ function normalizePayload(data) {
 
 function normalizeWorks(payload) {
   const works = Array.isArray(payload?.works) ? payload.works : [];
-  // idがあるものだけ残す（title/reasonは任意）
   return works
     .filter((w) => w && w.id)
     .map((w) => ({
@@ -175,51 +240,37 @@ function normalizeWorks(payload) {
       title: String(w.title ?? ""),
       reason: String(w.reason ?? ""),
       url: w.url ? String(w.url) : "",
+      w: typeof w.w === "number" ? w.w : null,
+      h: typeof w.h === "number" ? w.h : null,
     }));
 }
 
 // ============================================================
-// フレーム可変：works数に合わせて増減＋並べる
+// 4面レイアウト（front/back/left/right）
 // ============================================================
-function layoutPositionsOnBackWall(n) {
-  const z = -(ROOM?.depth ? ROOM.depth / 2 - 0.3 : 4.7);
-  const y = 1.6;
-
-  const spacing = 5.2;
-  const total = (n - 1) * spacing;
-  const startX = -total / 2;
-
-  const positions = [];
-  for (let i = 0; i < n; i++) {
-    positions.push(new THREE.Vector3(startX + i * spacing, y, z));
-  }
-  return positions;
-}
-
 function buildWallConfigs() {
   const halfW = ROOM.width / 2;
   const halfD = ROOM.depth / 2;
   const yCenter = ROOM.height / 2;
 
-  // 壁面の「中心点」「内向き法線」「横方向（右）」
   return [
-    // 0: 正面（奥） z = -halfD, 内側は +Z
+    // 奥（正面） z=-halfD, 内側=+Z
     {
       name: "front",
       center: new THREE.Vector3(0, yCenter, -halfD),
       normal: new THREE.Vector3(0, 0, 1),
       right: new THREE.Vector3(1, 0, 0),
-      span: ROOM.width, // 横に並べられる長さ
+      span: ROOM.width,
     },
-    // 1: 背面（手前） z = +halfD, 内側は -Z
+    // 手前（背面） z=+halfD, 内側=-Z
     {
       name: "back",
       center: new THREE.Vector3(0, yCenter, +halfD),
       normal: new THREE.Vector3(0, 0, -1),
-      right: new THREE.Vector3(-1, 0, 0), // カメラから見て右方向が揃うように
+      right: new THREE.Vector3(-1, 0, 0),
       span: ROOM.width,
     },
-    // 2: 左壁 x = -halfW, 内側は +X
+    // 左 x=-halfW, 内側=+X
     {
       name: "left",
       center: new THREE.Vector3(-halfW, yCenter, 0),
@@ -227,7 +278,7 @@ function buildWallConfigs() {
       right: new THREE.Vector3(0, 0, -1),
       span: ROOM.depth,
     },
-    // 3: 右壁 x = +halfW, 内側は -X
+    // 右 x=+halfW, 内側=-X
     {
       name: "right",
       center: new THREE.Vector3(+halfW, yCenter, 0),
@@ -238,26 +289,24 @@ function buildWallConfigs() {
   ];
 }
 
-// worksを4面に振り分けて、壁ごとにグリッド配置する
-function layoutPositionsOnFourWalls(works, {
-  floatFromWall = 0.35,  // ★壁からの浮かせ（大きめで確実に）
-  baseY = 2.8,           // ★床から浮かせる（目線より上）
-  topMargin = 1.2,       // 天井との余裕
-  colGap = 1.6,          // 横の隙間
-  rowGap = 1.8,          // 縦の隙間
-  defaultFrameW = 4.4,
-  defaultFrameH = 3.2,
-  sideMargin = 1.5,      // 端の余裕
-} = {}) {
+function layoutPositionsOnFourWalls(
+  works,
+  {
+    floatFromWall = 0.75, // ★壁からの浮かせ（確実に）
+    baseY = 4.0,          // ★床から浮かせ（かなり高め）
+    topMargin = 1.2,
+    colGap = 2.0,
+    rowGap = 2.2,
+    defaultFrameW = 4.4,
+    defaultFrameH = 3.2,
+    sideMargin = 2.0,
+  } = {}
+) {
   const walls = buildWallConfigs();
-
-  // 壁ごとにworks indexを集める
   const byWall = walls.map(() => []);
-  for (let i = 0; i < works.length; i++) {
-    byWall[i % 4].push(i);
-  }
 
-  // 位置結果（index -> {pos, normal}）
+  for (let i = 0; i < works.length; i++) byWall[i % 4].push(i);
+
   const out = new Array(works.length);
 
   for (let w = 0; w < walls.length; w++) {
@@ -265,25 +314,19 @@ function layoutPositionsOnFourWalls(works, {
     const indices = byWall[w];
     if (indices.length === 0) continue;
 
-    // 使える横幅
     const usableSpan = Math.max(0, wall.span - sideMargin * 2);
 
-    // 何列置けるか（今は等サイズ想定。将来は work.w/h で可変にする）
+    // 今は等サイズで列数決定。サイズ可変は後で packing に拡張可能
     const cellW = defaultFrameW + colGap;
     const cols = Math.max(1, Math.floor(usableSpan / cellW));
-
-    // 上方向
-    const up = new THREE.Vector3(0, 1, 0);
 
     for (let k = 0; k < indices.length; k++) {
       const idx = indices[k];
       const col = k % cols;
       const row = Math.floor(k / cols);
 
-      // 左端→右へ
       const xOffset = (col - (cols - 1) / 2) * cellW;
 
-      // baseYから上へ積む（部屋高さを超えないように）
       const y = Math.min(
         ROOM.height - topMargin,
         baseY + row * (defaultFrameH + rowGap)
@@ -291,93 +334,100 @@ function layoutPositionsOnFourWalls(works, {
 
       const anchor = wall.center.clone();
       anchor.y = y;
-
-      // 壁面上で横方向へずらす
       anchor.add(wall.right.clone().multiplyScalar(xOffset));
 
-      // 壁から少し浮かす
       const pos = anchor.clone().add(wall.normal.clone().multiplyScalar(floatFromWall));
-
       out[idx] = { pos, normal: wall.normal.clone() };
     }
   }
 
   return out;
 }
+
+// ============================================================
+// 作品サイズ（実寸m→scene単位）
+// ============================================================
+const SCALE = 8.0; // 1m → 8 units（見やすさで調整）
+
+function sizeFromWork(work) {
+  // CSV（w_m/h_m）優先 → なければバックエンドの w/h → なければデフォルト
+  const srcW = work.w_m ?? work.w ?? null;
+  const srcH = work.h_m ?? work.h ?? null;
+
+  const w = srcW ? srcW * SCALE : 4.4;
+  const h = srcH ? srcH * SCALE : 3.2;
+
+  // 上限下限（暴れ防止）
+  const fw = Math.min(Math.max(w, 2.5), 10.0);
+  const fh = Math.min(Math.max(h, 2.0), 8.0);
+
+  return { fw, fh };
+}
+
+// ============================================================
+// フレーム可変：works数に合わせて増減＋4面配置
+// ★サイズ反映を確実にするため「毎回作り直し」方式
+// ============================================================
 function syncFramesToWorks(works) {
   const n = works.length;
 
-  // 4面レイアウト
+  // レイアウト（いったん等サイズ前提でセル計算）
   const placements = layoutPositionsOnFourWalls(works, {
-    floatFromWall: 0.35,  // ★もっと浮かす
-    baseY: 2.8,           // ★床から浮かす
-    colGap: 1.8,
-    rowGap: 2.0,
+    floatFromWall: 0.75,
+    baseY: 4.0,
+    colGap: 2.0,
+    rowGap: 2.2,
     defaultFrameW: 4.4,
     defaultFrameH: 3.2,
   });
 
-  // 増やす
-  while (frames.length < n) {
-    const frame = createArtFrame([], new THREE.Vector3(0, 0, 0), {
-      assetsBase: "./assets/GoghDB",
-      mode: "auto",
-      // 将来：作品サイズをここに入れる
-      frameWidth: 4.4,
-      frameHeight: 3.2,
-      paintingWidth: 4.0,
-      paintingHeight: 2.8,
-    });
-    scene.add(frame.group);
-    frames.push(frame);
-  }
-
-  // 減らす
+  // フレーム配列を n に合わせる（参照として保持）
+  while (frames.length < n) frames.push(null);
   while (frames.length > n) {
     const removed = frames.pop();
     if (removed?.group) scene.remove(removed.group);
   }
 
-  // 位置・向き・内容反映
   for (let i = 0; i < n; i++) {
     const p = placements[i];
     if (!p) continue;
 
-    const frame = frames[i];
-    frame.group.position.copy(p.pos);
+    const work = works[i];
+    const { fw, fh } = sizeFromWork(work);
 
-    // 壁に貼り付く向き（表面が壁の法線方向を向く）
+    // 既存を消す
+    const old = frames[i];
+    if (old?.group) scene.remove(old.group);
+
+    // ★ work.url を使うので mode="url"
+    const frame = createArtFrame([work], p.pos, {
+      mode: "url",
+      assetsBase: "./assets/GoghDB",
+
+      frameWidth: fw,
+      frameHeight: fh,
+      frameDepth: 0.1,
+
+      paintingWidth: Math.max(0.2, fw - 0.4),
+      paintingHeight: Math.max(0.2, fh - 0.4),
+      paintingOffsetZ: 0.051,
+    });
+
     frame.group.lookAt(p.pos.clone().add(p.normal));
-
-    // 内容
-    if (frame.setWork) frame.setWork(works[i]);
-    else if (frame.setWorkId) frame.setWorkId(works[i]?.id);
+    scene.add(frame.group);
+    frames[i] = frame;
   }
 }
 
 // ============================================================
-// 起動時の初期展示（ここで“最初にある程度絵を表示”）
+// 起動時の初期展示（まず見せる）
 // ============================================================
 const INITIAL_WORKS = [
-  {
-    id: "F458",
-    title: "ひまわり",
-    reason: "初期展示：鮮やかな黄色が特徴の代表作。",
-  },
-  {
-    id: "F587",
-    title: "麦畑と糸杉",
-    reason: "初期展示：黄金の麦畑と青空の対比が美しい。",
-  },
-  {
-    id: "F422",
-    title: "種まく人",
-    reason: "初期展示：夕日の光と躍動的な筆致。",
-  },
+  { id: "F458", title: "ひまわり", reason: "初期展示：鮮やかな黄色が印象的です。" },
+  { id: "F587", title: "麦畑と糸杉", reason: "初期展示：黄金の麦畑と青空の対比。" },
+  { id: "F422", title: "種まく人", reason: "初期展示：夕日の光と躍動的な筆致。" },
 ];
-
-syncFramesToWorks(INITIAL_WORKS);
-chatLog.addSystem(`🖼 初期展示を ${INITIAL_WORKS.length} 枚表示しました`);
+syncFramesToWorks(enrichWorksWithCatalog(INITIAL_WORKS));
 
 // ============================================================
 // HUD 入力（ユーザインプット）
@@ -387,35 +437,33 @@ hud = setupHudInput({
 
   onSend: (text) => {
     chatLog.addUser(text);
+    chatLog.open();
   },
 
   onResponse: (data) => {
-    // ★ 受け取り形を吸収
-    const payloadRaw = normalizePayload(data);
+    const payload = normalizePayload(data);
 
-    // デバッグしたい時はこれを一時的にONにすると一発で原因が分かる
-    // console.log("[onResponse] raw:", data);
-    // console.log("[onResponse] payload:", payloadRaw);
-
-    if (payloadRaw?.curator_comment) {
-      chatLog.addAI(payloadRaw.curator_comment);
-    } else if (payloadRaw?.error) {
-      chatLog.addAI(`❌ ${String(payloadRaw.error)}`);
-    } else if (typeof payloadRaw?.text === "string" && payloadRaw.text.trim()) {
-      // もし text で返すAPIならここ
-      chatLog.addAI(payloadRaw.text.trim());
+    // AIコメントはチャットに表示
+    if (payload?.curator_comment) {
+      chatLog.addAI(payload.curator_comment);
+      chatLog.open();
+    } else if (payload?.error) {
+      chatLog.addAI(`❌ ${String(payload.error)}`);
+      chatLog.open();
+    } else if (typeof payload?.text === "string" && payload.text.trim()) {
+      chatLog.addAI(payload.text.trim());
+      chatLog.open();
     }
 
-    const works = normalizeWorks(payloadRaw);
-
-    if (works.length === 0) {
-      // ★ “空でした” は出すけど、初期展示は残す（クリアしない）
-      chatLog.addSystem("⚠️ works が空でした（初期展示を維持します）");
+    const worksRaw = normalizeWorks(payload);
+    if (worksRaw.length === 0) {
+      toast.show("⚠️ 展示更新なし（works空）");
       return;
     }
 
+    const works = enrichWorksWithCatalog(worksRaw);
     syncFramesToWorks(works);
-    chatLog.addSystem(`🧩 展示を ${works.length} 枚に更新しました`);
+    toast.show(`🧩 展示を ${works.length} 枚に更新`);
   },
 });
 
@@ -447,6 +495,7 @@ const fixedTimeStep = 1 / 60;
 const maxSubSteps = 3;
 
 function handlePlayerMovement() {
+  // HUD入力中 / 閲覧モード中 / 拡大表示中は移動させない
   if (hud.isTyping() || viewMode || viewer.isOpen()) {
     playerBody.velocity.x = 0;
     playerBody.velocity.z = 0;
@@ -495,4 +544,4 @@ function animate() {
 }
 
 animate();
-console.log("🟢 VR Museum frontend started (Variable frames + initial works)");
+console.log("🟢 VR Museum frontend started");
