@@ -199,7 +199,8 @@ window.addEventListener("pointerdown", (e) => {
   const caption = [label ? `🖼 ${label}` : "🖼 Artwork", reason]
     .filter(Boolean)
     .join("\n\n");
-  viewer.show(url, caption);
+  const title = label ? `🖼 ${label}` : "🖼 Artwork";
+  viewer.show(url, title, reason);
 });
 
 // ============================================================
@@ -289,17 +290,16 @@ function buildWallConfigs() {
   ];
 }
 
+
 function layoutPositionsOnFourWalls(
   works,
   {
-    floatFromWall = 0.75, // ★壁からの浮かせ（確実に）
-    baseY = 4.0,          // ★床から浮かせ（かなり高め）
+    floatFromWall = 0.75,
+    baseY = 4.0,
     topMargin = 1.2,
-    colGap = 2.0,
-    rowGap = 2.2,
-    defaultFrameW = 4.4,
-    defaultFrameH = 3.2,
     sideMargin = 2.0,
+    rowGap = 2.2,
+    colGap = 2.0,
   } = {}
 ) {
   const walls = buildWallConfigs();
@@ -316,28 +316,37 @@ function layoutPositionsOnFourWalls(
 
     const usableSpan = Math.max(0, wall.span - sideMargin * 2);
 
-    // 今は等サイズで列数決定。サイズ可変は後で packing に拡張可能
-    const cellW = defaultFrameW + colGap;
-    const cols = Math.max(1, Math.floor(usableSpan / cellW));
+    let currentRowY = baseY;
+    let currentRowWidth = 0;
+    let rowStartIndex = 0;
 
     for (let k = 0; k < indices.length; k++) {
       const idx = indices[k];
-      const col = k % cols;
-      const row = Math.floor(k / cols);
+      const work = works[idx];
+      const { fw, fh } = sizeFromWork(work);
 
-      const xOffset = (col - (cols - 1) / 2) * cellW;
+      // 次の絵を配置したときに列幅を超える場合、改行
+      if (currentRowWidth + fw + (k > rowStartIndex ? colGap : 0) > usableSpan) {
+        currentRowY += Math.max(...indices.slice(rowStartIndex, k).map(i => sizeFromWork(works[i]).fh)) + rowGap;
+        currentRowWidth = 0;
+        rowStartIndex = k;
+      }
 
-      const y = Math.min(
-        ROOM.height - topMargin,
-        baseY + row * (defaultFrameH + rowGap)
-      );
+      // 壁のスペースを超えないようにチェック
+      if (currentRowY + fh / 2 > ROOM.height - topMargin) {
+        console.warn(`絵が壁のスペースを超えました: ${work.title}`);
+        continue;
+      }
 
+      const xOffset = currentRowWidth + fw / 2 - usableSpan / 2;
       const anchor = wall.center.clone();
-      anchor.y = y;
+      anchor.y = currentRowY + fh / 2;
       anchor.add(wall.right.clone().multiplyScalar(xOffset));
 
       const pos = anchor.clone().add(wall.normal.clone().multiplyScalar(floatFromWall));
       out[idx] = { pos, normal: wall.normal.clone() };
+
+      currentRowWidth += fw + colGap;
     }
   }
 
@@ -418,7 +427,6 @@ function syncFramesToWorks(works) {
     frames[i] = frame;
   }
 }
-
 // ============================================================
 // 起動時の初期展示（まず見せる）
 // ============================================================
@@ -494,39 +502,49 @@ const clock = new THREE.Clock();
 const fixedTimeStep = 1 / 60;
 const maxSubSteps = 3;
 
-function handlePlayerMovement() {
-  // HUD入力中 / 閲覧モード中 / 拡大表示中は移動させない
-  if (hud.isTyping() || viewMode || viewer.isOpen()) {
-    playerBody.velocity.x = 0;
-    playerBody.velocity.z = 0;
-    return;
-  }
-
-  const move = new THREE.Vector3();
-
-  if (controls.move.forward) move.z -= 1;
-  if (controls.move.backward) move.z += 1;
-  if (controls.move.left) move.x -= 1;
-  if (controls.move.right) move.x += 1;
-
-  if (move.lengthSq() > 0) {
-    move.normalize();
-
-    const yaw = camera.rotation.y;
-    const sinY = Math.sin(yaw);
-    const cosY = Math.cos(yaw);
-
-    const dirX = move.x * cosY - move.z * sinY;
-    const dirZ = move.x * sinY + move.z * cosY;
-
-    playerBody.velocity.x = dirX * 3;
-    playerBody.velocity.z = dirZ * 3;
-  } else {
-    playerBody.velocity.x = 0;
-    playerBody.velocity.z = 0;
-  }
-}
-
+// main.js の handlePlayerMovement を置き換え
+function handlePlayerMovement() {
+  // 入力（WASD）をローカル平面の移動量にする
+  let x = 0;
+  let z = 0;
+  if (controls.move.forward) z += 1;
+  if (controls.move.backward) z -= 1;
+  if (controls.move.left) x -= 1;
+  if (controls.move.right) x += 1;
+
+  // 入力がない時は横方向だけ減速（止まる）
+  if (x === 0 && z === 0) {
+    playerBody.velocity.x = 0;
+    playerBody.velocity.z = 0;
+    return;
+  }
+
+  // 正規化（斜め移動が速くならないように）
+  const len = Math.hypot(x, z);
+  x /= len;
+  z /= len;
+
+  // カメラの向きから「前(forward)」「右(right)」を作る（水平成分のみ）
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  forward.y = 0;
+  forward.normalize();
+
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  right.y = 0;
+  right.normalize();
+
+  // ワールド移動方向 = right*x + forward*z
+  const dir = new THREE.Vector3()
+    .addScaledVector(right, x)
+    .addScaledVector(forward, z)
+    .normalize();
+
+  const speed = 6;
+
+  // 物理のY速度（落下など）は維持して、XZだけ上書き
+  playerBody.velocity.x = dir.x * speed;
+  playerBody.velocity.z = dir.z * speed;
+}
 function animate() {
   requestAnimationFrame(animate);
 

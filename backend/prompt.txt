@@ -23,7 +23,7 @@ You must output strictly in VALID JSON format. Do not include markdown formattin
 1. Abstract Requests (e.g., "sad", "energetic"): Select up to 3 works that evoke the requested feeling through color, composition, or brushwork.
 2. Specific Requests (e.g., "Sunflowers", "Starry Night"): Select the exact work requested.
 3. No Match: If the request is unrelated to Van Gogh or no works match, return an empty "works" list and explain politely in "curator_comment".
-
+reasonのところはなぜその作品がユーザーのリクエストに合っているのかを説明する部分です。
 # Reasoning Logic (Educational Scaffolding)
 When writing the "reason":
 - Do NOT just describe the history of the painting.
