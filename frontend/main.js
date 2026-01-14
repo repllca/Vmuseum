@@ -5,6 +5,7 @@
 //  + 4面配置（front/back/left/right）
 //  + test.csv をフロントで読み込み（F番号→title/width/height/imagefilename）
 //  + 作品ごとにサイズ可変（実寸m→スケール変換）
+//  + ✅ 説明をボタンで全体ON/OFF
 // ===============================
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
 
@@ -48,14 +49,68 @@ toast.show("🟢 VR Museum started");
 const viewer = createImageViewer();
 
 // ============================================================
+// ✅ 説明表示トグル（全フレーム一括）
+// ============================================================
+let descriptionsVisible = true;
+
+function createToggleDescButton({ right = 18, top = 18 } = {}) {
+  const btn = document.createElement("button");
+  btn.textContent = "📝 説明: ON";
+  btn.style.position = "fixed";
+  btn.style.right = `${right}px`;
+  btn.style.top = `${top}px`;
+  btn.style.zIndex = 9999;
+  btn.style.padding = "10px 12px";
+  btn.style.borderRadius = "10px";
+  btn.style.border = "1px solid rgba(255,255,255,0.25)";
+  btn.style.background = "rgba(0,0,0,0.55)";
+  btn.style.color = "white";
+  btn.style.cursor = "pointer";
+  btn.style.backdropFilter = "blur(6px)";
+  btn.style.userSelect = "none";
+
+  btn.addEventListener("click", () => {
+    descriptionsVisible = !descriptionsVisible;
+    btn.textContent = descriptionsVisible ? "📝 説明: ON" : "📝 説明: OFF";
+    applyDescriptionsVisibilityToAllFrames(descriptionsVisible);
+    toast.show(descriptionsVisible ? "📝 説明を表示" : "📝 説明を非表示");
+  });
+
+  document.body.appendChild(btn);
+  return btn;
+}
+
+function applyDescriptionsVisibilityToFrame(frame, visible) {
+  if (!frame) return;
+
+  // ✅ artFrame.js が setDescriptionsVisible を返している場合
+  if (typeof frame.setDescriptionsVisible === "function") {
+    frame.setDescriptionsVisible(visible);
+    return;
+  }
+
+  // ✅ フォールバック（userData.isArtworkDesc の可視性切替）
+  if (frame.group) {
+    frame.group.traverse((o) => {
+      if (o?.userData?.isArtworkDesc) o.visible = visible;
+    });
+  }
+}
+
+function applyDescriptionsVisibilityToAllFrames(visible) {
+  for (const f of frames) applyDescriptionsVisibilityToFrame(f, visible);
+}
+
+// ボタン設置
+createToggleDescButton({ right: 18, top: 18 });
+
+// ============================================================
 // test.csv（フロントでロード）
 // ============================================================
 let catalogMap = new Map();
 
 async function initCatalog() {
   try {
-    // ✅ test.csv をフロントの静的配下に置く（例: /assets/test.csv）
-    // ここが 404 ならパスを合わせてください
     catalogMap = await loadCatalogCsv("./assets/test.csv");
     toast.show(`📚 catalog loaded: ${catalogMap.size}`);
   } catch (e) {
@@ -67,10 +122,8 @@ async function initCatalog() {
 await initCatalog();
 
 function resolveImageUrlFromMeta(meta) {
-  // ローカル運用（CSVの imagefilename が F1.jpg など）
   if (meta?.imagefilename) return `./assets/GoghDB/${meta.imagefilename}`;
 
-  // 直リンクURLなら採用（upload.wikimedia.org の場合など）
   if (meta?.wikimediaurl && meta.wikimediaurl.includes("upload.wikimedia.org")) {
     return meta.wikimediaurl;
   }
@@ -86,12 +139,9 @@ function enrichWorksWithCatalog(works) {
 
     return {
       ...w,
-      // title が空なら英題で補完（日本語タイトルが別途あるならそれを使う）
       title: w.title && String(w.title).trim() ? w.title : (meta?.title_en ?? ""),
-      // 実寸（m想定）
       w_m: meta?.w_m ?? null,
       h_m: meta?.h_m ?? null,
-      // work.url を artFrame 側で使えるように（mode=url で表示）
       url: url ?? w.url ?? "",
     };
   });
@@ -116,7 +166,6 @@ let lastHoverColor = null;
 function setViewMode(on) {
   viewMode = on;
 
-  // 閲覧モードONなら pointer lock を外す（カーソル操作したい）
   if (viewMode && document.pointerLockElement) {
     document.exitPointerLock?.();
   }
@@ -196,11 +245,12 @@ window.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  const caption = [label ? `🖼 ${label}` : "🖼 Artwork", reason]
-    .filter(Boolean)
-    .join("\n\n");
-  const title = label ? `🖼 ${label}` : "🖼 Artwork";
-  viewer.show(url, title, reason);
+  // viewer.show(url, title, reason) 仕様
+  const title = label ? `🖼 ${label}` : "🖼 Artwork";
+
+  // ✅ 説明OFFなら reason だけ消す
+  const showReason = descriptionsVisible ? reason : "";
+  viewer.show(url, title, showReason);
 });
 
 // ============================================================
@@ -209,15 +259,12 @@ window.addEventListener("pointerdown", (e) => {
 function normalizePayload(data) {
   if (!data) return null;
 
-  // 直下にある
   if (data.curator_comment || data.works) return data;
 
-  // ラッパー
   if (data.json && (data.json.curator_comment || data.json.works)) return data.json;
   if (data.data && (data.data.curator_comment || data.data.works)) return data.data;
   if (data.result && (data.result.curator_comment || data.result.works)) return data.result;
 
-  // textにJSON文字列が入っている
   if (typeof data.text === "string") {
     const s = data.text.trim();
     if (s.startsWith("{") && s.endsWith("}")) {
@@ -255,7 +302,6 @@ function buildWallConfigs() {
   const yCenter = ROOM.height / 2;
 
   return [
-    // 奥（正面） z=-halfD, 内側=+Z
     {
       name: "front",
       center: new THREE.Vector3(0, yCenter, -halfD),
@@ -263,7 +309,6 @@ function buildWallConfigs() {
       right: new THREE.Vector3(1, 0, 0),
       span: ROOM.width,
     },
-    // 手前（背面） z=+halfD, 内側=-Z
     {
       name: "back",
       center: new THREE.Vector3(0, yCenter, +halfD),
@@ -271,7 +316,6 @@ function buildWallConfigs() {
       right: new THREE.Vector3(-1, 0, 0),
       span: ROOM.width,
     },
-    // 左 x=-halfW, 内側=+X
     {
       name: "left",
       center: new THREE.Vector3(-halfW, yCenter, 0),
@@ -279,7 +323,6 @@ function buildWallConfigs() {
       right: new THREE.Vector3(0, 0, -1),
       span: ROOM.depth,
     },
-    // 右 x=+halfW, 内側=-X
     {
       name: "right",
       center: new THREE.Vector3(+halfW, yCenter, 0),
@@ -289,7 +332,6 @@ function buildWallConfigs() {
     },
   ];
 }
-
 
 function layoutPositionsOnFourWalls(
   works,
@@ -325,14 +367,17 @@ function layoutPositionsOnFourWalls(
       const work = works[idx];
       const { fw, fh } = sizeFromWork(work);
 
-      // 次の絵を配置したときに列幅を超える場合、改行
       if (currentRowWidth + fw + (k > rowStartIndex ? colGap : 0) > usableSpan) {
-        currentRowY += Math.max(...indices.slice(rowStartIndex, k).map(i => sizeFromWork(works[i]).fh)) + rowGap;
+        const rowHeights = indices
+          .slice(rowStartIndex, k)
+          .map((i) => sizeFromWork(works[i]).fh);
+        const rowMaxH = rowHeights.length ? Math.max(...rowHeights) : 0;
+
+        currentRowY += rowMaxH + rowGap;
         currentRowWidth = 0;
         rowStartIndex = k;
       }
 
-      // 壁のスペースを超えないようにチェック
       if (currentRowY + fh / 2 > ROOM.height - topMargin) {
         console.warn(`絵が壁のスペースを超えました: ${work.title}`);
         continue;
@@ -356,17 +401,15 @@ function layoutPositionsOnFourWalls(
 // ============================================================
 // 作品サイズ（実寸m→scene単位）
 // ============================================================
-const SCALE = 8.0; // 1m → 8 units（見やすさで調整）
+const SCALE = 8.0;
 
 function sizeFromWork(work) {
-  // CSV（w_m/h_m）優先 → なければバックエンドの w/h → なければデフォルト
   const srcW = work.w_m ?? work.w ?? null;
   const srcH = work.h_m ?? work.h ?? null;
 
   const w = srcW ? srcW * SCALE : 4.4;
   const h = srcH ? srcH * SCALE : 3.2;
 
-  // 上限下限（暴れ防止）
   const fw = Math.min(Math.max(w, 2.5), 10.0);
   const fh = Math.min(Math.max(h, 2.0), 8.0);
 
@@ -375,22 +418,17 @@ function sizeFromWork(work) {
 
 // ============================================================
 // フレーム可変：works数に合わせて増減＋4面配置
-// ★サイズ反映を確実にするため「毎回作り直し」方式
 // ============================================================
 function syncFramesToWorks(works) {
   const n = works.length;
 
-  // レイアウト（いったん等サイズ前提でセル計算）
   const placements = layoutPositionsOnFourWalls(works, {
     floatFromWall: 0.75,
     baseY: 4.0,
     colGap: 2.0,
     rowGap: 2.2,
-    defaultFrameW: 4.4,
-    defaultFrameH: 3.2,
   });
 
-  // フレーム配列を n に合わせる（参照として保持）
   while (frames.length < n) frames.push(null);
   while (frames.length > n) {
     const removed = frames.pop();
@@ -404,11 +442,9 @@ function syncFramesToWorks(works) {
     const work = works[i];
     const { fw, fh } = sizeFromWork(work);
 
-    // 既存を消す
     const old = frames[i];
     if (old?.group) scene.remove(old.group);
 
-    // ★ work.url を使うので mode="url"
     const frame = createArtFrame([work], p.pos, {
       mode: "url",
       assetsBase: "./assets/GoghDB",
@@ -422,6 +458,9 @@ function syncFramesToWorks(works) {
       paintingOffsetZ: 0.051,
     });
 
+    // ✅ ここで状態反映（重要）
+    applyDescriptionsVisibilityToFrame(frame, descriptionsVisible);
+
     frame.group.lookAt(p.pos.clone().add(p.normal));
     scene.add(frame.group);
     frames[i] = frame;
@@ -429,12 +468,24 @@ function syncFramesToWorks(works) {
 }
 // ============================================================
 // 起動時の初期展示（まず見せる）
+
 // ============================================================
 const INITIAL_WORKS = [
   { id: "F458", title: "ひまわり", reason: "初期展示：鮮やかな黄色が印象的です。" },
   { id: "F587", title: "麦畑と糸杉", reason: "初期展示：黄金の麦畑と青空の対比。" },
   { id: "F422", title: "種まく人", reason: "初期展示：夕日の光と躍動的な筆致。" },
+
+  { id: "F482", title: "夜のカフェテラス", reason: "初期展示：夜景の光と色彩が魅力。" },
+  { id: "F612", title: "星月夜", reason: "初期展示：渦巻く空の表現が象徴的。" },
+  { id: "F476", title: "アルルの寝室", reason: "初期展示：シンプルな構図と色面。" },
+
+  { id: "F527", title: "自画像", reason: "初期展示：視線と筆致に注目。" },
+  { id: "F454", title: "花咲くアーモンドの枝", reason: "初期展示：春らしい爽やかな青。" },
+  { id: "F630", title: "アイリス", reason: "初期展示：青紫のリズム感。" },
+
+  { id: "F775", title: "雨の橋（日本趣味）", reason: "初期展示：浮世絵風の構図。" },
 ];
+
 syncFramesToWorks(enrichWorksWithCatalog(INITIAL_WORKS));
 
 // ============================================================
@@ -451,7 +502,6 @@ hud = setupHudInput({
   onResponse: (data) => {
     const payload = normalizePayload(data);
 
-    // AIコメントはチャットに表示
     if (payload?.curator_comment) {
       chatLog.addAI(payload.curator_comment);
       chatLog.open();
@@ -477,7 +527,6 @@ hud = setupHudInput({
 
 // ============================================================
 // Controls（閲覧モード中はpointer lockしない）
-// ※ controls.js は canPointerLock対応版にしてね
 // ============================================================
 const controls = setupControls(camera, {
   canPointerLock: () => !hud.isTyping() && !viewMode && !viewer.isOpen(),
@@ -502,49 +551,49 @@ const clock = new THREE.Clock();
 const fixedTimeStep = 1 / 60;
 const maxSubSteps = 3;
 
-// main.js の handlePlayerMovement を置き換え
-function handlePlayerMovement() {
-  // 入力（WASD）をローカル平面の移動量にする
-  let x = 0;
-  let z = 0;
-  if (controls.move.forward) z += 1;
-  if (controls.move.backward) z -= 1;
-  if (controls.move.left) x -= 1;
-  if (controls.move.right) x += 1;
-
-  // 入力がない時は横方向だけ減速（止まる）
-  if (x === 0 && z === 0) {
-    playerBody.velocity.x = 0;
-    playerBody.velocity.z = 0;
-    return;
-  }
-
-  // 正規化（斜め移動が速くならないように）
-  const len = Math.hypot(x, z);
-  x /= len;
-  z /= len;
-
-  // カメラの向きから「前(forward)」「右(right)」を作る（水平成分のみ）
-  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-  forward.y = 0;
-  forward.normalize();
-
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-  right.y = 0;
-  right.normalize();
-
-  // ワールド移動方向 = right*x + forward*z
-  const dir = new THREE.Vector3()
-    .addScaledVector(right, x)
-    .addScaledVector(forward, z)
-    .normalize();
-
-  const speed = 6;
-
-  // 物理のY速度（落下など）は維持して、XZだけ上書き
-  playerBody.velocity.x = dir.x * speed;
-  playerBody.velocity.z = dir.z * speed;
-}
+function handlePlayerMovement() {
+  if (hud?.isTyping?.() || viewMode || viewer.isOpen()) {
+    playerBody.velocity.x = 0;
+    playerBody.velocity.z = 0;
+    return;
+  }
+
+  let x = 0;
+  let z = 0;
+  if (controls.move.forward) z += 1;
+  if (controls.move.backward) z -= 1;
+  if (controls.move.left) x -= 1;
+  if (controls.move.right) x += 1;
+
+  if (x === 0 && z === 0) {
+    playerBody.velocity.x = 0;
+    playerBody.velocity.z = 0;
+    return;
+  }
+
+  const len = Math.hypot(x, z);
+  x /= len;
+  z /= len;
+
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+  forward.y = 0;
+  forward.normalize();
+
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  right.y = 0;
+  right.normalize();
+
+  const dir = new THREE.Vector3()
+    .addScaledVector(right, x)
+    .addScaledVector(forward, z)
+    .normalize();
+
+  const speed = 6;
+
+  playerBody.velocity.x = dir.x * speed;
+  playerBody.velocity.z = dir.z * speed;
+}
+
 function animate() {
   requestAnimationFrame(animate);
 
