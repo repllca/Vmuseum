@@ -1,19 +1,12 @@
 # バーチャルミュージアム
-## １．システム概要
-### 1.1 目的
-パーソナライズされた体験を提供したい。ユーザの入力:　
-### 1.2 背景
 
-
-
-## ２
+## 起動方法
+## データセットダウンロード
 frontendに移動して以下を実行する
 # 3) GoghDB フォルダだけをローカル assets に保存
-hf download repllca/GoghDB \
-  --repo-type dataset \
-  --local-dir ./assets\
-  --include "GoghDB/*"
-
+"""
+hf download repllca/GoghDB --repo-type dataset --local-dir ./assets　--include "GoghDB/*"
+"""
 
 GEMINI_API_KEY=
 
