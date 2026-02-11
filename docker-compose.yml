@@ -12,6 +12,9 @@ services:
     container_name: vr-frontend
     ports:
       - "8080:8080"
+
+    volumes:
+      - ./frontend/assets:/usr/share/nginx/html/assets:ro
     depends_on:
       - backend
 

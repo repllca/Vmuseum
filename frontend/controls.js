@@ -1,4 +1,5 @@
-export function setupControls(camera) {
+// controls.js
+export function setupControls(camera, { canPointerLock = () => true } = {}) {
   const move = { forward: false, backward: false, left: false, right: false };
   let pitch = 0;
   let yaw = 0;
@@ -17,6 +18,7 @@ export function setupControls(camera) {
     if (e.code === "KeyA") move.left = true;
     if (e.code === "KeyD") move.right = true;
   });
+
   window.addEventListener("keyup", (e) => {
     if (e.code === "KeyW") move.forward = false;
     if (e.code === "KeyS") move.backward = false;
@@ -24,7 +26,15 @@ export function setupControls(camera) {
     if (e.code === "KeyD") move.right = false;
   });
 
-  window.addEventListener("click", () => document.body.requestPointerLock());
+  // ★ クリックでの pointer lock は “許可される時だけ”
+  window.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    if (!canPointerLock()) return;
+
+    // ★ SecurityError を握りつぶす（競合しても落ちない）
+    const p = document.body.requestPointerLock?.();
+    if (p?.catch) p.catch(() => {});
+  });
 
   function update() {
     camera.rotation.order = "YXZ";
